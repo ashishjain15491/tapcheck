@@ -128,22 +128,28 @@ const SHELL: Record<string, string> = {
     // A dialog that shows a placeholder until its content arrives, a second later.
     '/dialog': page(`<button aria-haspopup="dialog" onclick="box.hidden = false; fetch('/slow').then((x) => x.text()).then((t) => { box.innerHTML = t })">Details</button>
         <div id="box" role="dialog" aria-label="Details" hidden>Loading…</div>`),
+    // A dialog whose content takes longer than the wait: slow, not unloaded.
+    '/stuck': page(`<button aria-haspopup="dialog" onclick="box.hidden = false; fetch('/later')">Flow</button>
+        <div id="box" role="dialog" aria-label="Flow" hidden>Loading…</div>`),
     '/slow': '<p style="width: 80px; overflow: hidden; white-space: nowrap">A very long line of text that cannot fit in eighty pixels</p>',
     // One text too faint in both themes, one only in the dark.
     '/dark': page('<style>@media (prefers-color-scheme: dark) { body { background: #111111; color: #eeeeee } }</style><p id="both" style="background: #ffffff; color: #cccccc">Faint</p><p id="night" style="color: #333333">Night</p>'),
 };
 
-test('audit: Tab starts at the main content, controls in view are measured first, a dialog is judged once loaded, dark mode reports only its own contrast', async () => {
+test('audit: Tab starts at the main content, controls in view are measured first, a dialog is judged once loaded or said to be slow, dark mode reports only its own contrast', async () => {
     const tmp = mkdtempSync(`${tmpdir()}/tapcheck-audit-`);
-    const server = createServer((req, res) => { setTimeout(() => res.writeHead(200, { 'content-type': 'text/html' }).end(SHELL[req.url!] ?? ''), req.url === '/slow' ? 1000 : 0); });
+    const server = createServer((req, res) => { setTimeout(() => res.writeHead(200, { 'content-type': 'text/html' }).end(SHELL[req.url!] ?? ''), req.url === '/slow' ? 1000 : req.url === '/later' ? 4000 : 0); });
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
     after(async () => { await closeBrowser(); server.close(); });
     const cfg = check({ baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, viewports: [{ name: 'desktop', width: 800, height: 600 }],
-        screens: ['/rail', '/many', '/dialog', '/dark'].map((path) => ({ name: path.slice(1), path })) }, tmp);
+        screens: ['/rail', '/many', '/dialog', '/stuck', '/dark'].map((path) => ({ name: path.slice(1), path })) }, tmp);
     const found: Omit<Finding, 'side'>[] = [];
     delete process.env.JEV;
     setup({ budget: 1, headers: {} }, { systemOne: async ({ questions }) => ({ answers: Object.fromEntries(Object.keys(questions).map((k) => [k, { noul: k === 'loaded' ? 0.9 : 0.1 }])), usage: { input_tokens: 100 } }) });
+    const wait = audit.timing.popupLoad;
+    audit.timing.popupLoad = 1500;
     await audit.run({ cfg, side: cfg.sides[0], dir: tmp, record: (f) => { found.push(f); }, crawl: { pages: [], hits: [], done: false } });
+    audit.timing.popupLoad = wait;
     const at = (where: string, check: string) => { const f = found.find((x) => x.where === where && x.check === check); return `${f?.status}: ${f?.detail ?? ''}`; };
 
     assert.equal(at('rail · desktop', 'focus ring on every Tab stop'), 'fail: 1: button "Quiet"');
@@ -151,6 +157,8 @@ test('audit: Tab starts at the main content, controls in view are measured first
     assert.equal(at('many · desktop', 'controls measured'), 'info: measured the first 300 of 400 controls, those in the window first');
     assert.match(at('dialog › Details', 'text is not cut off'), /^fail: 1: "A very long line/);
     assert.equal(at('dialog › Details', 'visual: loaded'), `pass: "Do the screenshots show the screen's main content, fully loaded?" Jev: yes (90% sure)`);
+    assert.match(at('stuck › Flow', 'visual: loaded'), /^warn: still loading 2 s after the click: 1 request\(s\) it set off hadn't ended/);
+    assert.equal(found.filter((f) => f.where === 'stuck › Flow' && f.check === 'visual: loaded').length, 1); // Jev wasn't asked too
     assert.equal(at('dark · dark', 'dark mode: text contrast (axe)'), 'fail: 1: #night');
 });
 

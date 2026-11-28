@@ -5,6 +5,9 @@
 - **Plain or marked, and large, in report.html.** A finding with a marked or Jev-boxed screenshot shows it first with a
   "plain ↔ marked" button that swaps it with the plain screenshot and back, and a screenshot opens large in the page
   (Esc or a click closes it). Without JavaScript the images and links work as before; REPORT.md is unchanged.
+- **A slow dialog is slow, not unloaded.** A menu or dialog is judged once the requests its click set off have ended,
+  up to 15 s (was 3 s). One still loading then is a warning that says how long it took, and Jev isn't asked whether it
+  loaded, so a section that fills in after 9 s no longer fails as "not fully loaded".
 
 ## 0.1.5 (2026-11-27)
 

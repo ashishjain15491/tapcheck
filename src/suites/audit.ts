@@ -37,6 +37,8 @@ const WARN = new Set(['shortened text can be read in full', 'heading levels in o
 const MARKS: Record<string, string> = { 'no sideways scroll': 'wide', 'text is not cut off': 'cut', 'shortened text can be read in full': 'short', 'controls do not overlap': 'overlap',
     'targets at least 24 px': 'small', 'images have alt text': 'alt' };
 const TABS = 20, TOP = 5, MAX_POPUPS = 4;
+/** How long a dialog's requests may run before it is judged; a test shortens it. */
+export const timing = { popupLoad: 15_000 };
 
 /**
  * The opened menu or dialog ([data-tapcheck-popup]) cut out of the screen, at least 280 px a side (the least Jev takes),
@@ -443,8 +445,11 @@ export async function run(r: Run) {
             if (found) {
                 opened++;
                 // What it opened may still be loading (placeholders, a spinner): judged once the requests the click set off
-                // have ended (3 s at most) and the page is quiet.
-                for (const until = Date.now() + 3000; pending.size && Date.now() < until;) await page.waitForTimeout(100);
+                // have ended (15 s at most) and the page is quiet. Still loading then, it is slow, not unloaded: a warning
+                // says so, and Jev isn't asked whether it loaded.
+                const t0 = Date.now();
+                for (const until = t0 + timing.popupLoad; pending.size && Date.now() < until;) await page.waitForTimeout(100);
+                const slow = pending.size;
                 await Promise.race([settle(page), page.waitForTimeout(1000)]);
                 const at = `${t.name} › ${label}`, shot = `${r.dir}/shots/${key}-popup-${opened}.png`;
                 await page.screenshot({ path: shot });
@@ -452,7 +457,9 @@ export async function run(r: Run) {
                 await emit(page, t, `${found} "${label}"`, at, p.problems, [shot], p.capped);
                 // Asked about the menu or dialog alone. A dialog loads its content as a screen does; a menu or a list of options doesn't.
                 const { loaded: _, ...rest } = POPUP_VISUAL;
-                const questions = /dialog/.test(found) ? POPUP_VISUAL : rest;
+                const questions = /dialog/.test(found) && !slow ? POPUP_VISUAL : rest;
+                if (slow) r.record({ suite: S, where: at, check: 'visual: loaded', status: 'warn', evidence: [shot],
+                    detail: `still loading ${Math.round((Date.now() - t0) / 1000)} s after the click: ${slow} request(s) it set off hadn't ended, so it was judged as it was then` });
                 // Jev sees the menu or dialog alone: the page around it is covered on purpose, and isn't what is asked about.
                 const crop = jevOff ? undefined : await popupShot(page, `${r.dir}/shots/${key}-popup-${opened}-alone.png`);
                 await look(at, `${key}-popup-${opened}`, { screen: `${t.name}, after "${label}" was clicked`, viewport: `${desktop.name}, ${desktop.width} × ${desktop.height} px`,
