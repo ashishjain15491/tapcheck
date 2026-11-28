@@ -246,9 +246,13 @@ function measure({ root: rootSel, extras, design }: { root?: string; extras: boo
         if (button && (r.height > 64 || /^\d+$/.test(label) || lines(el))) continue;
         const bare = s.backgroundColor === 'rgba(0, 0, 0, 0)' && !parseFloat(s.borderTopWidth);
         const kind = field ? (tag === 'input' ? 'text input' : tag) : !label ? 'icon button' : bare ? 'text button' : 'button';
+        // A bare control that takes its colour from the data beside it (a ⚡ in a "56% BULL" tag) is coloured by that data:
+        // green, red and amber there are one scheme, not three.
+        const up = el.parentElement, rest = up ? up.textContent!.replace(el.textContent ?? '', '') : '';
+        const ink = bare && up && getComputedStyle(up).color === s.color && /[\d$€£¥₹%]/.test(rest) ? 'the colour of the data beside it' : s.color;
         box.setAttribute('data-tapcheck-item', String(items.length));
         items.push({ kind, label, shape: `${kind === 'textarea' ? '' : `${Math.round(r.height)} px high, `}radius ${px(b.borderTopLeftRadius)} px, ${px(s.fontSize)} px text`,
-            paint: `${s.color} on ${b.backgroundColor}, ${parseFloat(b.borderTopWidth) ? `border ${b.borderTopColor}` : 'no border'}` });
+            paint: `${ink} on ${b.backgroundColor}, ${parseFloat(b.borderTopWidth) ? `border ${b.borderTopColor}` : 'no border'}` });
         // A button among three or more of its kind side by side is a row of data (a list of events, of tickers), not a label.
         const row = (e: Element) => (e.closest('li') ?? e).parentElement, like = (e: Element) => e.tagName === el.tagName && e.className === el.className;
         if (button && label && [...(row(el)?.querySelectorAll(tag) ?? [])].filter((e) => row(e) === row(el) && like(e)).length < 3) say(label, el);

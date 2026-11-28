@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A control coloured by its data is one colour.** A bare control that takes its colour from the data beside it (a ⚡
+  in a green "56% BULL" or red "88% BEAR" tag) counts as one colour scheme in the consistency checks, not one per
+  colour the data takes. A control with a colour of its own still counts as its own scheme.
 - **Plain or marked, and large, in report.html.** A finding with a marked or Jev-boxed screenshot shows it first with a
   "plain ↔ marked" button that swaps it with the plain screenshot and back, and a screenshot opens large in the page
   (Esc or a click closes it). Without JavaScript the images and links work as before; REPORT.md is unchanged.

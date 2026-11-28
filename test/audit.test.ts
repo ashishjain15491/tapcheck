@@ -171,9 +171,11 @@ const LOOKS = page(`<style>
 <p><button>Add plant</button> <button>Save changes</button></p> <button>Fern<br>Needs water</button> <button style="height: 80px">Tall</button>
 <nav><button class="pg">1</button> <button class="pg">2</button></nav>
 <ul>${['FOMC Member Williams Speaks', 'Richmond Manufacturing Index', 'New Home Sales'].map((x) => `<li><button class="row">${x}</button></li>`).join('')}</ul>
-<button>LOOP $5.9M · 2 Prints Today</button> <button>Understanding Dark Pool Activity And More</button>`);
+<button>LOOP $5.9M · 2 Prints Today</button> <button>Understanding Dark Pool Activity And More</button>
+${[['#0a5d2b', '58% BULL'], ['#a5140f', '88% BEAR'], ['#8f5104', '47/53 MIXED']].map(([c, t]) => `<span style="color:${c}"><span role="button">⚡</span>${t}</span>`).join(' ')}
+<span style="color:#0a5d2b"><span role="button" style="color:#0000ff">⚡</span>61% BULL</span>`);
 
-test('audit consistency: a field is measured at its wrapper, cards and page numbers are no button look, data is no label', async () => {
+test('audit consistency: a field is measured at its wrapper, cards and page numbers are no button look, data is no label, a control coloured by its data is one colour', async () => {
     const tmp = mkdtempSync(`${tmpdir()}/tapcheck-audit-`);
     const server = createServer((_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }).end(LOOKS); });
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
@@ -187,6 +189,8 @@ test('audit consistency: a field is measured at its wrapper, cards and page numb
     assert.match(at('consistency: one size and radius per text input'), /^pass: 1 look\(s\): 40 px high, radius 8 px, \d+ px text ×2 \(Search, Filter\)$/);
     assert.match(at('consistency: text input colours'), /^pass: 1 colour scheme\(s\): .* on rgb\(255, 255, 255\), border rgb\(17, 17, 17\)$/);
     assert.match(at('consistency: one size and radius per button'), /^pass: 1 look\(s\): .* ×7 \(Add plant, Save changes, /);
+    // A ⚡ coloured by the tag it sits in is one scheme however the tag is coloured; one with its own colour is another.
+    assert.equal(at('consistency: text button colours'), 'pass: 2 colour scheme(s): the colour of the data beside it on rgba(0, 0, 0, 0), no border; rgb(0, 0, 255) on rgba(0, 0, 0, 0), no border');
     assert.equal(at('labels use one case'), 'pass: ');
     assert.deepEqual(JSON.parse(readFileSync(`${tmp}/audit.json`, 'utf8')).labelCase, { title: [], sentence: ['Add plant', 'Save changes'] });
 });
