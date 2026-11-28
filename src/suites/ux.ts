@@ -169,6 +169,8 @@ export async function visual(r: Run, suite: string, where: string, a: Record<str
     const shared = (a: Box, b: Box) => area({ left: Math.max(a.left, b.left), right: Math.min(a.right, b.right), top: Math.max(a.top, b.top), bottom: Math.min(a.bottom, b.bottom) });
     const kind = (s: { box: Box; slice: number }) => {
         const l = shotLayout.get(shots[s.slice]);
+        // Text measured cut off in the box is a cut, whatever else the box takes in (a "…" label beside it, a row's end).
+        if (l?.cuts.some((q) => shared(s.box, q) > 0)) return 'cut';
         // On a row: the box's middle within the row's height (Jev's box is often taller than a 24 px row of chips), half
         // its width on the row, and at one of the row's ends.
         const mid = (s.box.top + s.box.bottom) / 2, wide = (q: Box) => Math.max(0, Math.min(s.box.right, q.right) - Math.max(s.box.left, q.left)) >= (s.box.right - s.box.left) / 2;
@@ -176,23 +178,32 @@ export async function visual(r: Run, suite: string, where: string, a: Record<str
         // Text shortened on purpose ("…") inside the box: what the question says is not cut off.
         if (l?.shortened.some((q) => { const x = (q.left + q.right) / 2, y = (q.top + q.bottom) / 2; return x >= s.box.left && x <= s.box.right && y >= s.box.top && y <= s.box.bottom; })) return 'rail';
         if (l?.floaters.some((q) => shared(s.box, q) > Math.min(area(s.box), area(q)) * 0.3)) return 'floater';
-        return 'cut';
+        // Nothing in the box measured cut off: Jev likely pointing at nothing.
+        return l ? 'apart' : 'cut';
     };
+    // Jev's overlap box with nothing measured drawn on each other in it, on every slice it boxed: likely pointing at nothing.
+    const unmeasured = (seen: { box: Box; slice: number }[] | undefined) => !!seen?.length && seen.every((s) => {
+        const l = shotLayout.get(shots[s.slice]);
+        return !!l && !l.overlaps.some((q) => shared(s.box, q) > 0);
+    });
     const edge = (b: Box) => b.left < 0.05 || b.top < 0.05 || b.right > 0.95 || b.bottom > 0.95; // within 5% of a side
     for (const [k, defect] of all) {
         if (!a[k]) continue;
         const v = defect ? bad(a[k].noul) : good(a[k].noul), seen = boxed[k];
         const cropped = o.crop && k === 'clipped' && seen?.every((s) => edge(s.box));
         const kinds = !cropped && k === 'clipped' && seen?.length ? seen.map(kind) : [];
-        const scrolls = kinds.length > 0 && kinds.every((x) => x === 'rail'), floats = !scrolls && kinds.length > 0 && kinds.every((x) => x !== 'cut');
-        const at = failing.includes(k as any) ? (scrolls ? ' · boxed at the end of a row that scrolls sideways or on text shortened with "…" (measured), which the question does not count as cut off: check it'
+        const scrolls = kinds.length > 0 && kinds.every((x) => x === 'rail'), uncut = !scrolls && kinds.length > 0 && kinds.every((x) => x !== 'cut');
+        const floats = uncut && kinds.includes('floater');
+        const apart = (k === 'overlap' && failing.includes(k) && unmeasured(seen)) || (uncut && !floats);
+        const at = failing.includes(k as any) ? (apart ? ` · boxed where no text${k === 'overlap' ? ' or control is measured drawn on another' : ' is measured cut off by its box or the side of the window'} (an image or a canvas isn't measured): check it`
+            : scrolls ? ' · boxed at the end of a row that scrolls sideways or on text shortened with "…" (measured), which the question does not count as cut off: check it'
             : floats ? ' · boxed under a small control fixed over the page (measured, such as a chat button) or at the end of a row that scrolls sideways: covered only until the page scrolls, check what is behind it can be scrolled into view'
             : cropped ? " · boxed at the edge of tapcheck's cut-out of the menu or dialog, so the cut may be the crop's, not the app's: check it on the full screen"
             : seen ? ' · boxed where Jev places it (a prediction, check it)' : " · Jev couldn't point to one place: look through the screenshots") : '';
         // Jev unsure whether a menu's items line up, and their text measured starting together: in line.
         const inLine = k === 'misaligned' && v === 'unsure' && !!o.starts && o.starts.spread <= 2;
         const lined = inLine ? ` · passes: the ${o.starts!.n} items' text starts within ${o.starts!.spread} px of each other (measured)` : '';
-        r.record({ suite, where, check: `visual: ${k.replace('_', ' ')}`, status: scrolls || inLine ? 'pass' : cropped || floats ? 'warn' : status(v), detail: `${sayNoul((asked as any)[k], a[k].noul, v !== 'pass', defect)}${at}${lined}`, evidence: [...(seen ?? []).map((s) => s.file), ...shots] });
+        r.record({ suite, where, check: `visual: ${k.replace('_', ' ')}`, status: scrolls || inLine ? 'pass' : cropped || floats || apart ? 'warn' : status(v), detail: `${sayNoul((asked as any)[k], a[k].noul, v !== 'pass', defect)}${at}${lined}`, evidence: [...(seen ?? []).map((s) => s.file), ...shots] });
     }
 }
 

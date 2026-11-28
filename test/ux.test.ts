@@ -183,7 +183,7 @@ test('visual: a cut Jev boxes at the end of a sideways row passes, one under a f
     const page = await (await launch()).newPage({ viewport: { width: 1000, height: 500 } });
     // A sideways row of chips, a tall page below it, and a chat button fixed at the bottom right.
     await page.setContent(`<body style="margin:0"><div style="display:flex;overflow-x:auto;width:800px;margin:20px 0 0 100px;gap:8px">${Array.from({ length: 20 }, (_, i) => `<span style="flex:none;padding:6px;border:1px solid">Sector chip ${i + 1}</span>`).join('')}</div>
-        <div style="height:300px"></div><span style="margin-left:300px">Real E…</span><div style="height:300px"></div><button style="position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:50%">chat</button></body>`);
+        <div style="height:300px"></div><span style="margin-left:300px">Real E…</span><div style="position:absolute;left:650px;top:220px;width:60px;overflow:hidden;white-space:nowrap">Communication Services</div><div style="height:300px"></div><button style="position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:50%">chat</button></body>`);
     const shots = await slices({ dir: tmp } as Run, page, 'screen', await page.evaluate(() => document.documentElement.scrollHeight), 500);
     await page.close();
     assert.equal(shots.length, 2);
@@ -212,8 +212,43 @@ test('visual: a cut Jev boxes at the end of a sideways row passes, one under a f
     assert.ok(label, 'the shortened label is measured');
     const onLabel = await run({ top: label.top - 0.02, bottom: label.bottom + 0.02, left: label.left - 0.02, right: label.right + 0.02 }, shotLayout.get(shots[0])!.shortened.length ? 0 : 1);
     assert.equal(onLabel.status, 'pass');
+    assert.ok(first.cuts.some((q) => q.left >= 0.64 && q.right <= 0.72), 'the label its box cuts, measured');
     const real = await run({ top: 0.4, bottom: 0.5, left: 0.6, right: 0.8 });
     assert.equal(real.status, 'fail');
+    // A box around the shortened label and the cut one too: the cut counts.
+    const both = await run({ top: Math.min(label.top, 0.4) - 0.02, bottom: Math.max(label.bottom, 0.5), left: Math.min(label.left, 0.6) - 0.02, right: 0.8 });
+    assert.equal(both.status, 'fail');
+    // Jev's box where nothing is cut off: a warning that says so.
+    const empty = await run({ top: 0.6, bottom: 0.7, left: 0.2, right: 0.4 });
+    assert.deepEqual([empty.status, /no text is measured cut off/.test(empty.detail!)], ['warn', true]);
+});
+
+test('visual: an overlap Jev boxes where nothing is measured drawn on another warns; one on two labels drawn on each other fails', async () => {
+    const tmp = mkdtempSync(`${tmpdir()}/tapcheck-overlap-`);
+    after(closeBrowser);
+    const { launch, slices, shotLayout } = await import('../src/browser.ts');
+    const page = await (await launch()).newPage({ viewport: { width: 1000, height: 500 } });
+    // A label laid over a tile's ticker at the top left; a button with its own text, and plain text, apart, below.
+    await page.setContent(`<body style="margin:0"><div style="position:relative;width:200px;height:80px"><span style="position:absolute;left:0;top:0">Financials</span><span style="position:absolute;left:20px;top:6px">JPM +2.0%</span></div>
+        <p style="margin:200px 0 0 500px"><button>Filter</button> <span>Sector: All</span></p>
+        <!-- Not drawn on each other: a label at opacity 0 over a button, chips under a sideways row's › button, a chip the row hides. -->
+        <div style="position:relative;margin-left:500px"><span style="opacity:0;position:absolute">DISCOVER</span><button>Scanner</button></div>
+        <div style="position:relative;width:300px;margin-left:500px"><div style="display:flex;overflow-x:auto;gap:4px">${Array.from({ length: 12 }, (_, i) => `<button style="flex:none">Chip ${i}</button>`).join('')}</div>
+        <button style="position:absolute;right:0;top:0">›</button></div></body>`);
+    const shots = await slices({ dir: tmp } as Run, page, 'screen', 500, 500);
+    await page.close();
+    const l = shotLayout.get(shots[0])!;
+    assert.ok(l.overlaps.length >= 1 && l.overlaps.every((q) => q.right < 0.25 && q.bottom < 0.1), 'only the two labels, not a button and its own text');
+    const run = async (box: Record<string, number>) => {
+        setup({ budget: 1, headers: {} }, { systemOne: async ({ questions, model }) => ({ answers: Object.fromEntries(Object.keys(questions).map((k) => [k, model ? { box } : { noul: 0.9 }])), usage: { input_tokens: 10 } }) });
+        const found: Omit<Finding, 'side'>[] = [];
+        await ux.visual({ dir: tmp, record: (f: Omit<Finding, 'side'>) => { found.push(f); } } as unknown as Run, 'audit', `Map ${JSON.stringify(box)}`, { overlap: { noul: 0.8 } }, shots);
+        return found[0];
+    };
+    const labels = await run({ top: 0, bottom: 0.08, left: 0, right: 0.2 });
+    assert.equal(labels.status, 'fail');
+    const nothing = await run({ top: 0.4, bottom: 0.6, left: 0.45, right: 0.75 });
+    assert.deepEqual([nothing.status, /no text or control is measured drawn on another/.test(nothing.detail!)], ['warn', true]);
 });
 
 test('helpControls: a chat assistant, a guide and a "?" are help; a product word that only contains one is not', async () => {

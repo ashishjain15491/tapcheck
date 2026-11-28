@@ -291,11 +291,15 @@ export async function resolve(r: Run, page: Page, s: Screen): Promise<string | n
 type Frac = { left: number; right: number; top: number; bottom: number };
 /**
  * What is in the window as it is now, as fractions of it (as Jev's boxes are): the rows that scroll sideways (a rail of
- * chips with a › button, a wide table), the small controls fixed in place over the page (a chat button), and text
- * shortened on purpose (an ellipsis by CSS, or "…" in the text itself).
+ * chips with a › button, a wide table), the small controls fixed in place over the page (a chat button), text
+ * shortened on purpose (an ellipsis by CSS, or "…" in the text itself), and where two lines of text or controls are
+ * drawn on each other: neither inside the other, both visible (clipped to what their scrolling parents show), and in one
+ * layer, so not one that scrolls past the other (a chip under a row's › button, rows under a sticky header or a chat button);
+ * and text cut off: by a parent that hides what overflows it, or by the side of the window, not shortened with "…" and not
+ * in a row that scrolls sideways.
  */
 export const layout = (page: Page) => page.evaluate(() => {
-    const rails: Frac[] = [], floaters: Frac[] = [], shortened: Frac[] = [];
+    const rails: Frac[] = [], floaters: Frac[] = [], shortened: Frac[] = [], overlaps: Frac[] = [], cuts: Frac[] = [];
     const frac = (b: DOMRect) => ({ left: b.left / innerWidth, right: b.right / innerWidth, top: b.top / innerHeight, bottom: b.bottom / innerHeight });
     for (const el of document.querySelectorAll('body *')) {
         const s = getComputedStyle(el), b = el.getBoundingClientRect();
@@ -305,8 +309,66 @@ export const layout = (page: Page) => page.evaluate(() => {
         const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim();
         if (own && ((s.textOverflow === 'ellipsis' && el.scrollWidth > el.clientWidth) || /(…|\.\.\.)$/.test(own))) shortened.push(frac(b));
     }
-    return { rails, floaters, shortened };
-}).catch(() => ({ rails: [] as Frac[], floaters: [] as Frac[], shortened: [] as Frac[] }));
+    // Each line of visible text and each control, with the element it belongs to, cut to what the window and its
+    // scrolling or clipping parents show, and its layer: the nearest fixed or sticky parent or row that scrolls sideways.
+    const pieces: { el: Element; b: DOMRect; layer: Element | null }[] = [];
+    const layers = new Map<Element, Element | null>();
+    const layer = (el: Element | null): Element | null => {
+        if (!el || el === document.body) return null;
+        if (layers.has(el)) return layers.get(el)!;
+        const s = getComputedStyle(el);
+        const own = /fixed|sticky/.test(s.position) || (/auto|scroll/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 4) ? el : layer(el.parentElement);
+        layers.set(el, own);
+        return own;
+    };
+    const shown = (el: Element, b: DOMRect) => {
+        let l = Math.max(b.left, 0), t = Math.max(b.top, 0), r = Math.min(b.right, innerWidth), btm = Math.min(b.bottom, innerHeight);
+        for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+            const s = getComputedStyle(p);
+            if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+            const c = p.getBoundingClientRect();
+            l = Math.max(l, c.left); t = Math.max(t, c.top); r = Math.min(r, c.right); btm = Math.min(btm, c.bottom);
+        }
+        return r - l > 0 && btm - t > 0 ? new DOMRect(l, t, r - l, btm - t) : null;
+    };
+    const add = (el: Element, b: DOMRect) => { const v = shown(el, b); if (v) pieces.push({ el, b: v, layer: layer(el) }); };
+    // What of a line of text a parent that hides its overflow, or a side of the window, leaves to be seen; the page
+    // scrolling up and down shows the rest, so the window's top and bottom don't cut.
+    const cut = (el: Element, b: DOMRect) => {
+        if (b.bottom <= 0 || b.top >= innerHeight) return;
+        let l = Math.max(b.left, 0), t = b.top, r = Math.min(b.right, innerWidth), btm = b.bottom;
+        for (let p: Element | null = el; p && p !== document.body; p = p.parentElement) {
+            const s = getComputedStyle(p);
+            if (p !== el && /auto|scroll/.test(s.overflowX) && p.scrollWidth > p.clientWidth + 4) return; // a row that scrolls sideways
+            if (s.textOverflow === 'ellipsis') return; // shortened with "…"
+            const c = p.getBoundingClientRect();
+            if (p !== el || el.childElementCount === 0) {
+                if (/hidden|clip/.test(s.overflowX)) { l = Math.max(l, c.left); r = Math.min(r, c.right); }
+                if (/hidden|clip/.test(s.overflowY)) { t = Math.max(t, c.top); btm = Math.min(btm, c.bottom); }
+            }
+        }
+        // A sliver left (a visually hidden label, 1 px) is hidden, not cut; most of it shown is whole.
+        if (r - l >= 4 && btm - t >= 4 && (r - l) * (btm - t) < b.width * b.height * 0.9) cuts.push(frac(new DOMRect(l, Math.max(t, 0), r - l, Math.min(btm, innerHeight) - Math.max(t, 0))));
+    };
+    const visible = (el: Element) => el.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n && pieces.length < 3000; n = w.nextNode()) {
+        const el = n.parentElement;
+        if (!n.textContent?.trim() || !el || !visible(el)) continue;
+        const range = document.createRange(); range.selectNodeContents(n);
+        for (const b of range.getClientRects()) { add(el, b); cut(el, b); }
+    }
+    for (const el of document.querySelectorAll('button, input, select, textarea, [role=button]')) if (visible(el)) add(el, el.getBoundingClientRect());
+    // ponytail: every pair, O(n²) over at most ~3000 pieces in the window; a grid of cells if a page ever has far more.
+    for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
+        const a = pieces[i], c = pieces[j];
+        if (a.layer !== c.layer) continue;
+        const x = Math.min(a.b.right, c.b.right) - Math.max(a.b.left, c.b.left), y = Math.min(a.b.bottom, c.b.bottom) - Math.max(a.b.top, c.b.top);
+        if (x <= 2 || y <= 2 || a.el.contains(c.el) || c.el.contains(a.el)) continue;
+        overlaps.push(frac(new DOMRect(Math.max(a.b.left, c.b.left), Math.max(a.b.top, c.b.top), x, y)));
+    }
+    return { rails, floaters, shortened, overlaps, cuts };
+}).catch(() => ({ rails: [] as Frac[], floaters: [] as Frac[], shortened: [] as Frac[], overlaps: [] as Frac[], cuts: [] as Frac[] }));
 /**
  * The visible controls in the window whose name says they open help: "Help", "FAQ", "Ask …" (an assistant), "Chat",
  * "Learn", "… guide", "?". Whole names only, so a word of the product's own ("support" as a price level) doesn't count.

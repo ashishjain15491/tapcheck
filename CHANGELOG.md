@@ -8,6 +8,10 @@
 - **A slow dialog is slow, not unloaded.** A menu or dialog is judged once the requests its click set off have ended,
   up to 15 s (was 3 s). One still loading then is a warning that says how long it took, and Jev isn't asked whether it
   loaded, so a section that fills in after 9 s no longer fails as "not fully loaded".
+- **Jev's overlap and cut boxes checked against the page.** Each slice now measures where text or controls are drawn
+  on each other (visible, as far as their scrolling parents show them, and not one scrolling past the other) and where
+  text is cut off by its box or the side of the window. An overlap or a cut Jev boxes where nothing is measured is a
+  warning that says so, not a failure; a measured cut in the box fails even beside a "…" label or a row's end.
 
 ## 0.1.5 (2026-11-27)
 
